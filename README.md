@@ -1,57 +1,65 @@
-# {{PLUGIN_NAME}}
+# blive
 
-> {{DESCRIPTION}}
+> Bilibili 直播间监控 + mpv 后台音频播放，ZTools 插件
 
-这是一个使用 **React 18 + Vite + TypeScript** 构建的 ZTools 插件。
+基于 **React 19 + Vite 6 + TypeScript** 构建。
 
-## ✨ 功能特性
+## 功能
 
-### 📌 已包含的示例功能
+### 直播间监控
 
-- **Hello** - 基础功能指令示例
-  - 触发指令：`你好` / `hello`
-  - 展示简单的 React 组件界面
+- 添加多个 Bilibili 直播间 room_id，API 验证后保存
+- 卡片式展示直播间封面、标题、主播名、分区、在线人数
+- 直播状态标签（直播中 / 未开播），B 站粉色风格
+- 可配置的轮询间隔（1 / 5 / 10 / 30 分钟）
+- 数据持久化到 localStorage，重启不丢失
 
-- **读文件** - 文件读取功能示例
-  - 功能指令：`读文件`
-  - 匹配指令：支持拖拽文件触发
-  - 演示如何使用 Node.js 能力读取文件内容
+### mpv 音频播放
 
-- **保存为文件** - 文件写入功能示例
-  - 匹配指令：任意文本/图片 → `保存为文件`
-  - 演示如何将剪贴板内容保存为文件
+- 鼠标移至**开播中**的卡片封面，显示播放遮罩
+- 点击 ▶ 后台启动 mpv 播放直播音频流（`--no-video`）
+- 再次点击 ⏹ 停止播放
+- 每个房间独立播放状态，互不干扰
 
-## 📁 项目结构
+## 环境依赖
+
+| 工具 | 说明 |
+|------|------|
+| [mpv](https://mpv.io) | 命令行播放器，用于播放直播音频流 |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | 视频提取工具，mpv 通过它解析 Bilibili 直播流地址 |
+
+安装：
+
+```bash
+brew install mpv yt-dlp
+```
+
+## 项目结构
 
 ```
 .
 ├── public/
 │   ├── logo.png              # 插件图标
-│   ├── plugin.json           # 插件配置文件
-│   └── preload/              # Preload 脚本目录
-│       ├── package.json      # Preload 依赖配置
-│       └── services.js       # Node.js 能力扩展
+│   ├── plugin.json           # 插件配置（功能注册、指令定义）
+│   └── preload/
+│       ├── package.json      # Preload 模块类型
+│       └── services.js       # Node.js 能力：API 请求、mpv 进程管理
 ├── src/
-│   ├── main.tsx              # 入口文件
-│   ├── main.css              # 全局样式
-│   ├── App.tsx               # 根组件
-│   ├── env.d.ts              # 类型声明
-│   ├── Hello/                # Hello 功能组件
-│   │   ├── index.tsx
-│   │   └── index.css
-│   ├── Read/                 # 读文件功能组件
-│   │   ├── index.tsx
-│   │   └── index.css
-│   └── Write/                # 写文件功能组件
-│       └── index.tsx
-├── index.html                # HTML 模板
+│   ├── main.tsx              # React 入口
+│   ├── main.css              # 全局样式（暗色模式支持）
+│   ├── App.tsx               # 根组件（路由分发）
+│   ├── env.d.ts              # TypeScript 类型声明
+│   └── Live/
+│       ├── index.tsx         # 直播间列表 + 监控 + 播放控制
+│       └── index.css         # 卡片布局、遮罩动画
+├── index.html                # HTML 模板（含 no-referrer 防盗链策略）
 ├── vite.config.js            # Vite 配置
 ├── tsconfig.json             # TypeScript 配置
 ├── package.json              # 项目依赖
-└── README.md                 # 项目文档
+└── README.md
 ```
 
-## 🚀 快速开始
+## 快速开始
 
 ### 安装依赖
 
@@ -65,303 +73,47 @@ npm install
 npm run dev
 ```
 
-开发服务器将在 `http://localhost:5173` 启动。ZTools 会自动加载开发版本。
+开发服务器在 `http://localhost:5173` 启动，ZTools 自动加载开发版本。
 
-### 构建生产版本
+**注意**：修改 `public/preload/services.js` 后需要 `npm run build` 才能生效，dev server 不会热更新 preload 脚本。
 
-```bash
-npm run build
-```
-
-构建产物将输出到 `dist/` 目录。
-
-## 📖 开发指南
-
-### 1. 修改插件配置
-
-编辑 `public/plugin.json` 文件：
-
-```json
-{
-  "name": "你的插件名称",
-  "description": "插件描述",
-  "author": "作者名称",
-  "version": "1.0.0",
-  "features": [
-    // 添加你的功能配置
-  ]
-}
-```
-
-### 2. 创建新功能
-
-#### 步骤 1: 创建 React 组件
-
-在 `src/` 目录下创建新的功能组件：
-
-```tsx
-// src/MyFeature/index.tsx
-import React, { useState } from 'react'
-import './index.css'
-
-export default function MyFeature() {
-  const [title, setTitle] = useState('我的新功能')
-
-  return (
-    <div className="my-feature">
-      <h1>{title}</h1>
-      {/* 你的组件内容 */}
-    </div>
-  )
-}
-```
-
-```css
-/* src/MyFeature/index.css */
-.my-feature {
-  padding: 20px;
-}
-```
-
-#### 步骤 2: 注册路由
-
-在 `src/App.tsx` 中添加路由：
-
-```tsx
-import MyFeature from './MyFeature'
-
-function App() {
-  const routes: Record<string, React.ComponentType> = {
-    hello: Hello,
-    read: Read,
-    write: Write,
-    myfeature: MyFeature // 添加新路由
-  }
-
-  // ...
-}
-```
-
-#### 步骤 3: 配置功能
-
-在 `plugin.json` 中添加功能配置：
-
-```json
-{
-  "code": "myfeature",
-  "explain": "我的新功能",
-  "icon": "logo.png",
-  "cmds": ["触发指令"]
-}
-```
-
-### 3. 使用 Node.js 能力
-
-#### 扩展 Preload 服务
-
-编辑 `public/preload/services.js`：
-
-```javascript
-const fs = require('fs')
-const path = require('path')
-
-module.exports = {
-  // 示例：读取文件
-  readFile: (filePath) => {
-    return fs.readFileSync(filePath, 'utf-8')
-  },
-
-  // 添加你的服务
-  myService: (params) => {
-    // 实现你的逻辑
-    return result
-  }
-}
-```
-
-#### 在 React 组件中调用
-
-```tsx
-import React, { useState } from 'react'
-
-export default function MyComponent() {
-  const [content, setContent] = useState('')
-
-  const handleRead = async () => {
-    try {
-      const result = await window.services.readFile('/path/to/file')
-      setContent(result)
-    } catch (error) {
-      console.error('读取失败:', error)
-    }
-  }
-
-  return (
-    <div>
-      <button onClick={handleRead}>读取文件</button>
-      <pre>{content}</pre>
-    </div>
-  )
-}
-```
-
-### 4. 使用 ZTools API
-
-```tsx
-import React from 'react'
-
-export default function MyComponent() {
-  const handleAction = async () => {
-    // 获取剪贴板内容
-    const text = await window.ztools.getClipboardContent()
-
-    // 隐藏主窗口
-    window.ztools.hideMainWindow()
-
-    // 显示提示
-    window.ztools.showTip('操作成功')
-  }
-
-  return <button onClick={handleAction}>执行操作</button>
-}
-```
-
-### 5. 使用 Hooks
-
-```tsx
-import React, { useState, useEffect } from 'react'
-
-export default function MyComponent() {
-  const [data, setData] = useState(null)
-
-  // 组件挂载时获取数据
-  useEffect(() => {
-    const fetchData = async () => {
-      const result = await window.services.getData()
-      setData(result)
-    }
-
-    fetchData()
-  }, [])
-
-  return <div>{data ? JSON.stringify(data) : 'Loading...'}</div>
-}
-```
-
-## 🎨 样式开发
-
-### 使用 CSS 变量
-
-ZTools 提供了一套 CSS 变量用于主题适配：
-
-```css
-.my-component {
-  background: var(--bg-color);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-}
-```
-
-### 使用 CSS Modules
-
-```tsx
-import styles from './MyComponent.module.css'
-
-export default function MyComponent() {
-  return <div className={styles.container}>内容</div>
-}
-```
-
-### 暗色模式支持
-
-```css
-@media (prefers-color-scheme: dark) {
-  .my-component {
-    /* 暗色模式样式 */
-  }
-}
-```
-
-## 📦 构建与发布
-
-### 1. 构建插件
+### 构建
 
 ```bash
 npm run build
 ```
 
-### 2. 测试构建产物
+产物输出到 `dist/` 目录。
 
-将 `dist/` 目录中的所有文件复制到 ZTools 插件目录进行测试。
+## 使用方式
 
-### 3. 发布到插件市场
+1. 在 ZTools 中输入 `直播` 触发插件
+2. 输入 Bilibili 直播间 room_id，点击「添加」
+3. 卡片自动加载封面、标题、主播信息
+4. 开播中的房间，鼠标移到封面出现 ▶ 图标，点击即可听直播
+5. 再次点击封面停止播放
 
-1. 确保 `plugin.json` 中的信息完整准确
-2. 准备好插件截图和详细说明
-3. 访问 ZTools 插件市场提交插件
+## 注意事项
 
-## 🔧 常用配置
+- **preload 修改需构建**：`public/preload/services.js` 在 dev 模式下不会热更新，修改后必须 `npm run build`
+- **PATH 问题**：ZTools 启动的 shell 环境不加载 `.zshrc`，`services.js` 中已硬编码 `/opt/homebrew/bin/mpv` 和 `/opt/homebrew/bin` 路径。如果你的 mpv/yt-dlp 安装在其他位置，需要修改 `services.js` 中的路径
+- **图片防盗链**：`index.html` 设置了 `<meta name="referrer" content="no-referrer">`，解决 Bilibili CDN 图片的 Referer 校验
+- **API 403**：Bilibili API 会检测请求头判断是否为脚本请求，插件通过 preload 层的 Node.js `https` 模块绕过浏览器的 `sec-fetch` 检测
+- **仅支持 macOS**：`plugin.json` 中 `platform` 限定为 `darwin`
+- **Bilibili API**：使用 `getRoomBaseInfo` 接口，支持一次请求查询多个房间，无需 WBI 签名
 
-### ESLint 配置
+## 技术要点
 
-如需添加 ESLint，安装依赖：
+### 为什么用 preload 发 API 请求？
 
-```bash
-npm install -D eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
-npm install -D eslint-plugin-react eslint-plugin-react-hooks
-```
+浏览器渲染进程的 `fetch()` 会自动添加 `sec-fetch-mode: cors` 头，Bilibili CDN 据此拦截非浏览器导航请求返回 403。通过 preload 层 Node.js 的 `https` 模块发请求可以完全控制请求头，模拟浏览器行为。
 
-### Prettier 配置
+### mpv 进程管理
 
-创建 `.prettierrc`：
+- 使用 `child_process.exec` 启动 mpv，通过 shell 执行确保环境一致
+- 显式设置 `PATH` 环境变量包含 `/opt/homebrew/bin`
+- 每个 room_id 独立追踪进程，停止时 `kill()` 并清理
 
-```json
-{
-  "semi": false,
-  "singleQuote": true,
-  "trailingComma": "es5"
-}
-```
-
-## 📚 相关资源
-
-- [ZTools 官方文档](https://github.com/ztool-center/ztools)
-- [ZTools API 文档](https://github.com/ztool-center/ztools-api-types)
-- [React 文档](https://react.dev/)
-- [Vite 文档](https://vitejs.dev/)
-
-## ❓ 常见问题
-
-### Q: 如何调试插件？
-
-A: 使用 `npm run dev` 启动开发服务器，在插件界面中点击插件头像图标，在弹出的菜单中选择"打开开发者工具"进行调试。
-
-### Q: 如何访问 Node.js 能力？
-
-A: 通过 `public/preload/services.js` 文件扩展服务，然后在组件中使用 `window.services` 调用。
-
-### Q: 插件图标不显示？
-
-A: 确保 `public/logo.png` 文件存在，且在 `plugin.json` 中正确配置了 `logo` 字段。
-
-### Q: 如何使用第三方 UI 库？
-
-A: 可以安装任何 React UI 库，如 Ant Design、Material-UI 等：
-
-```bash
-npm install antd
-```
-
-然后在组件中导入使用即可。
-
-### Q: TypeScript 类型错误如何处理？
-
-A: 在 `src/env.d.ts` 中添加类型声明，或者安装对应的 `@types` 包。
-
-## 📄 开源协议
+## 开源协议
 
 MIT License
-
----
-
-**祝你开发愉快！** 🎉
