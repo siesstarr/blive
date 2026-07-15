@@ -1,5 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './index.css'
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { arrayMove, rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 const ROOM_IDS_KEY = 'blive-room-ids'
 const INTERVAL_KEY = 'blive-poll-interval'
@@ -87,6 +98,93 @@ async function fetchApi(ids: number[]): Promise<{ json: ApiResponse; debug: Debu
   return { json, debug }
 }
 
+/* ── Sortable wrapper around .live-card ── */
+
+function SortableCard({ id, children }: { id: number; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} className="live-card" style={style} {...attributes} {...listeners}>
+      {children}
+    </div>
+  )
+}
+
+/* ── Card inner content (shared between grid & DragOverlay) ── */
+
+interface CardInnerProps {
+  id: number
+  info: RoomInfo | undefined
+  playing: boolean
+  onToggleMpv: (id: number) => void
+  onRemove: (id: number) => void
+  onRetry: (ids: number[]) => void
+}
+
+function CardInner({ id, info, playing, onToggleMpv, onRemove, onRetry }: CardInnerProps) {
+  if (!info) {
+    return (
+      <div className="live-card-error">
+        <span>获取数据失败</span>
+        <div className="live-card-error-actions">
+          <button onClick={() => onRetry([id])}>重试</button>
+          <button onClick={() => onRemove(id)}>移除</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="live-card-cover-wrap" onClick={() => onToggleMpv(id)}>
+        <img className="live-card-cover" src={info.cover} alt={info.title} referrerPolicy="no-referrer" draggable={false} />
+        {info.live_status === 1 && (
+          <div className="live-card-overlay">
+            <span className="live-card-play-icon">{playing ? '⏹' : '▶'}</span>
+          </div>
+        )}
+        {info.live_status === 1 && (
+          <span className="live-card-viewer">{info.online.toLocaleString()}</span>
+        )}
+        <span className={`live-card-status${info.live_status === 1 ? ' is-live' : ''}`}>
+          {info.live_status === 1 ? '直播中' : '未开播'}
+        </span>
+      </div>
+      <div className="live-card-body">
+        <div className="live-card-title" title={info.title}>
+          {info.title}
+        </div>
+        <div className="live-card-footer">
+          <div className="live-card-meta">
+            <span className="live-card-uname">{info.uname}</span>
+            {info.live_status === 1 && (
+              <span className="live-card-area">{info.area_name}</span>
+            )}
+          </div>
+          <button
+            className="live-card-del"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove(id)
+            }}
+            title="删除"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ── Main component ── */
+
 export default function Live() {
   const [roomIds, setRoomIds] = useState<number[]>(loadIds)
   const [roomsData, setRoomsData] = useState<Record<number, RoomInfo>>({})
@@ -94,17 +192,42 @@ export default function Live() {
   const [pollInterval, setPollInterval] = useState(loadInterval)
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
-  const [mpvLog, setMpvLog] = useState<MpvResult[]>([])
   const [playing, setPlaying] = useState<Record<number, boolean>>({})
+  const [showDebug, setShowDebug] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined)
 
-  const sortedIds = useMemo(() => (
-    [...roomIds].sort((a, b) => {
-      const sa = roomsData[a]?.live_status ?? -1
-      const sb = roomsData[b]?.live_status ?? -1
-      return sb - sa
-    })
-  ), [roomIds, roomsData])
+  /* ── dnd-kit ── */
+
+  const [activeId, setActiveId] = useState<number | null>(null)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    }),
+  )
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveId(event.active.id as number)
+  }, [])
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveId(null)
+    const { active, over } = event
+    if (over && active.id !== over.id) {
+      setRoomIds((prev) => {
+        const oldIdx = prev.indexOf(active.id as number)
+        const newIdx = prev.indexOf(over.id as number)
+        if (oldIdx === -1 || newIdx === -1) return prev
+        const next = arrayMove(prev, oldIdx, newIdx)
+        saveIds(next)
+        return next
+      })
+    }
+  }, [])
+
+  const isDragging = activeId !== null
+
+  /* ── data fetching ── */
 
   const fetchRooms = useCallback(async (ids: number[]) => {
     if (!ids.length) {
@@ -173,26 +296,38 @@ export default function Live() {
     [roomIds],
   )
 
-  // 轮询 mpv 输出
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const activeIds = Object.entries(playing).filter(([, v]) => v).map(([k]) => Number(k))
-      if (!activeIds.length) return
-      setMpvLog((prev) => {
-        const next = [...prev]
-        activeIds.forEach((id) => {
-          const out = window.services.getMpvOutput(id)
-          if (out.stdout || out.stderr) {
-            next.unshift({ action: 'output', roomId: id, stdout: out.stdout, stderr: out.stderr })
-          }
-        })
-        return next.slice(0, 20)
-      })
-    }, 3000)
-    return () => clearInterval(timer)
-  }, [playing])
+  const handleMpvToggle = useCallback(
+    (id: number) => {
+      const info = roomsData[id]
+      if (!info || info.live_status !== 1) return
+      const isPlaying = playing[id]
+      if (isPlaying) window.services.stopMpv(id)
+      else window.services.startMpv(id)
+      setPlaying((prev) => ({ ...prev, [id]: !isPlaying }))
+    },
+    [roomsData, playing],
+  )
 
-  // 轮询直播间数据
+  /* ── auto-sort: bubble live rooms to front on poll updates ── */
+
+  useEffect(() => {
+    if (isDragging) return
+    setRoomIds((prev) => {
+      const live: number[] = []
+      const offline: number[] = []
+      prev.forEach((id) => {
+        ;(roomsData[id]?.live_status === 1 ? live : offline).push(id)
+      })
+      const next = [...live, ...offline]
+      if (next.length !== prev.length) return prev
+      if (next.every((id, i) => id === prev[i])) return prev
+      saveIds(next)
+      return next
+    })
+  }, [roomsData, isDragging])
+
+  /* ── polling ── */
+
   useEffect(() => {
     if (roomIds.length) fetchRooms(roomIds)
     timerRef.current = setInterval(() => {
@@ -201,6 +336,10 @@ export default function Live() {
     }, pollInterval * 60 * 1000)
     return () => clearInterval(timerRef.current)
   }, [roomIds, pollInterval, fetchRooms])
+
+  /* ── render ── */
+
+  const activeInfo = activeId ? roomsData[activeId] : undefined
 
   return (
     <div className="live">
@@ -246,9 +385,17 @@ export default function Live() {
 
       {error && <div className="live-error">{error}</div>}
 
+      {/* 调试开关 — 仅 dev 环境可见 */}
+      {import.meta.env.DEV && (
+        <label className="live-debug-toggle">
+          <input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} />
+          <span>调试</span>
+        </label>
+      )}
+
       {/* 调试面板 */}
-      {debugInfo && (
-        <details className="live-debug">
+      {showDebug && debugInfo && (
+        <details className="live-debug" open>
           <summary className="live-debug-summary">请求详情</summary>
           <div className="live-debug-section">
             <div className="live-debug-label">
@@ -263,81 +410,40 @@ export default function Live() {
         </details>
       )}
 
-      {/* mpv 请求日志 */}
-      {mpvLog.length > 0 && (
-        <details className="live-debug">
-          <summary className="live-debug-summary">mpv 请求日志 ({mpvLog.length})</summary>
-          {mpvLog.map((entry, i) => (
-            <div key={i} className="live-debug-section">
-              <pre className="live-debug-pre">{JSON.stringify(entry, null, 2)}</pre>
-            </div>
-          ))}
-        </details>
-      )}
-
       {/* 房间信息卡片 */}
-      <div className="live-cards">
-        {sortedIds.map((id) => {
-          const info = roomsData[id]
-          return (
-            <div key={id} className="live-card">
-              {info ? (
-                <>
-                  <div
-                    className="live-card-cover-wrap"
-                    onClick={() => {
-                      if (info.live_status !== 1) return
-                      const isPlaying = playing[id]
-                      const result = isPlaying
-                        ? window.services.stopMpv(id)
-                        : window.services.startMpv(id)
-                      setMpvLog((prev) => [result, ...prev].slice(0, 20))
-                      setPlaying((prev) => ({ ...prev, [id]: !isPlaying }))
-                    }}
-                  >
-                    <img className="live-card-cover" src={info.cover} alt={info.title} referrerPolicy="no-referrer" />
-                    {info.live_status === 1 && (
-                      <div className="live-card-overlay">
-                        <span className="live-card-play-icon">{playing[id] ? '⏹' : '▶'}</span>
-                      </div>
-                    )}
-                    {info.live_status === 1 && (
-                      <span className="live-card-viewer">{info.online.toLocaleString()}</span>
-                    )}
-                    <span className={`live-card-status${info.live_status === 1 ? ' is-live' : ''}`}>
-                      {info.live_status === 1 ? '直播中' : '未开播'}
-                    </span>
-                  </div>
-                  <div className="live-card-body">
-                    <div className="live-card-title" title={info.title}>
-                      {info.title}
-                    </div>
-                    <div className="live-card-footer">
-                      <div className="live-card-meta">
-                        <span className="live-card-uname">{info.uname}</span>
-                        {info.live_status === 1 && (
-                          <span className="live-card-area">{info.area_name}</span>
-                        )}
-                      </div>
-                      <button className="live-card-del" onClick={() => handleRemove(id)} title="删除">
-                        ×
-                      </button>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="live-card-error">
-                  <span>获取数据失败</span>
-                  <div className="live-card-error-actions">
-                    <button onClick={() => fetchRooms([id])}>重试</button>
-                    <button onClick={() => handleRemove(id)}>移除</button>
-                  </div>
-                </div>
-              )}
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <SortableContext items={roomIds} strategy={rectSortingStrategy}>
+          <div className={`live-cards${isDragging ? ' is-dragging' : ''}`}>
+            {roomIds.map((id) => (
+              <SortableCard key={id} id={id}>
+                <CardInner
+                  id={id}
+                  info={roomsData[id]}
+                  playing={!!playing[id]}
+                  onToggleMpv={handleMpvToggle}
+                  onRemove={handleRemove}
+                  onRetry={fetchRooms}
+                />
+              </SortableCard>
+            ))}
+          </div>
+        </SortableContext>
+
+        <DragOverlay dropAnimation={null}>
+          {activeId && activeInfo ? (
+            <div className="live-card live-card-drag-overlay">
+              <CardInner
+                id={activeId}
+                info={activeInfo}
+                playing={!!playing[activeId]}
+                onToggleMpv={handleMpvToggle}
+                onRemove={handleRemove}
+                onRetry={fetchRooms}
+              />
             </div>
-          )
-        })}
-      </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
     </div>
   )
 }

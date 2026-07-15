@@ -83,6 +83,23 @@
   font-size: 13px;
 }
 
+/* 调试开关 */
+.live-debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-color, #999);
+  cursor: pointer;
+  user-select: none;
+}
+
+.live-debug-toggle input {
+  cursor: pointer;
+  accent-color: var(--blue);
+}
+
 /* 房间卡片 */
 .live-cards {
   display: grid;
@@ -96,6 +113,9 @@
   overflow: hidden;
   background: var(--bg-color, #fff);
   border: 1px solid var(--border-color, #e0e0e0);
+  transition: transform 0.2s ease;
+  user-select: none;
+  touch-action: none;
 }
 
 /* 封面区域 */
@@ -300,4 +320,22 @@
     background: #2a2a2b;
     border-color: #444;
   }
+}
+
+/* ── Drag-and-drop (dnd-kit) ── */
+
+.live-card-drag-overlay {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  opacity: 0.97;
+  pointer-events: none;
+  /* positioned automatically by dnd-kit's DragOverlay */
+}
+
+/* Suppress hover effects on all cards while dragging */
+.live-cards.is-dragging .live-card-cover-wrap:hover .live-card-overlay {
+  background: rgba(0, 0, 0, 0);
+}
+
+.live-cards.is-dragging .live-card-cover-wrap:hover .live-card-play-icon {
+  color: rgba(255, 255, 255, 0);
 }
