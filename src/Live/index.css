@@ -232,6 +232,13 @@
   color: var(--text-color, #bbb);
 }
 
+.live-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .live-card-del {
   flex-shrink: 0;
   width: 20px;
@@ -250,6 +257,31 @@
 .live-card-del:hover {
   background: #e74c3c;
   color: #fff;
+}
+
+.live-card-open {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(128, 128, 128, 0.15);
+  color: #fb7299;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-card-open:hover {
+  background: rgba(251, 114, 153, 0.2);
+  color: #fb7299;
+}
+
+.live-card-open-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .live-card-error {

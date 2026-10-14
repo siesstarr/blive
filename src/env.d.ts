@@ -8,39 +8,32 @@ interface FetchResult {
   body: string
 }
 
-interface MpvOutput {
-  stdout: string
-  stderr: string
+interface GetStreamUrlResult {
+  ok: boolean
+  url?: string
+  flv?: string
+  error?: string
 }
 
-interface MpvResult {
+interface StopStreamResult {
   action: string
   roomId?: number
-  command?: string | string[]
-  pid?: number
-  killed?: boolean
   skipped?: boolean
+  stopped?: boolean
   reason?: string
-  error?: string
-  stdout?: string
-  stderr?: string
-  ok?: boolean
+  log?: string[]
+}
+
+interface StreamLog {
+  lines: string[]
 }
 
 // Preload services 类型声明（对应 public/preload/services.js）
-interface TestExecResult {
-  ok: boolean
-  stdout: string
-  stderr: string
-  error?: string
-}
-
 interface Services {
   fetchRoomInfo(ids: number[]): Promise<FetchResult>
-  startMpv(roomId: number): MpvResult
-  stopMpv(roomId: number): MpvResult
-  getMpvOutput(roomId: number): MpvOutput
-  testExec(): Promise<TestExecResult>
+  getStreamUrl(roomId: number): Promise<GetStreamUrlResult>
+  stopStream(roomId: number): StopStreamResult
+  getStreamLog(roomId: number): StreamLog
 }
 
 interface Window {

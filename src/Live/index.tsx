@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { LogLine, startPlay, stopAll, stopPlay } from './player'
 
 const ROOM_IDS_KEY = 'blive-room-ids'
 const INTERVAL_KEY = 'blive-poll-interval'
@@ -122,12 +123,25 @@ interface CardInnerProps {
   id: number
   info: RoomInfo | undefined
   playing: boolean
-  onToggleMpv: (id: number) => void
+  onTogglePlay: (id: number) => void
   onRemove: (id: number) => void
   onRetry: (ids: number[]) => void
+  onOpen: (id: number) => void
 }
 
-function CardInner({ id, info, playing, onToggleMpv, onRemove, onRetry }: CardInnerProps) {
+function BilibiliIcon() {
+  return (
+    <svg className="live-card-open-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 2.6 5.8 6.2" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M17 2.6l1.2 3.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <rect x="3.2" y="6" width="17.6" height="13.4" rx="2.6" fill="currentColor" />
+      <rect x="8.5" y="10.3" width="2.1" height="4.8" rx="1.05" fill="#fff" />
+      <rect x="13.4" y="10.3" width="2.1" height="4.8" rx="1.05" fill="#fff" />
+    </svg>
+  )
+}
+
+function CardInner({ id, info, playing, onTogglePlay, onRemove, onRetry, onOpen }: CardInnerProps) {
   if (!info) {
     return (
       <div className="live-card-error">
@@ -142,7 +156,7 @@ function CardInner({ id, info, playing, onToggleMpv, onRemove, onRetry }: CardIn
 
   return (
     <>
-      <div className="live-card-cover-wrap" onClick={() => onToggleMpv(id)}>
+      <div className="live-card-cover-wrap" onClick={() => onTogglePlay(id)}>
         <img className="live-card-cover" src={info.cover} alt={info.title} referrerPolicy="no-referrer" draggable={false} />
         {info.live_status === 1 && (
           <div className="live-card-overlay">
@@ -167,16 +181,28 @@ function CardInner({ id, info, playing, onToggleMpv, onRemove, onRetry }: CardIn
               <span className="live-card-area">{info.area_name}</span>
             )}
           </div>
-          <button
-            className="live-card-del"
-            onClick={(e) => {
-              e.stopPropagation()
-              onRemove(id)
-            }}
-            title="删除"
-          >
-            ×
-          </button>
+          <div className="live-card-actions">
+            <button
+              className="live-card-del"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove(id)
+              }}
+              title="删除"
+            >
+              ×
+            </button>
+            <button
+              className="live-card-open"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpen(id)
+              }}
+              title="打开直播间"
+            >
+              <BilibiliIcon />
+            </button>
+          </div>
         </div>
       </div>
     </>
@@ -193,6 +219,7 @@ export default function Live() {
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [playing, setPlaying] = useState<Record<number, boolean>>({})
+  const [logs, setLogs] = useState<Record<number, LogLine[]>>({})
   const [showDebug, setShowDebug] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined)
 
@@ -296,17 +323,45 @@ export default function Live() {
     [roomIds],
   )
 
-  const handleMpvToggle = useCallback(
+  const handlePlayToggle = useCallback(
     (id: number) => {
       const info = roomsData[id]
       if (!info || info.live_status !== 1) return
-      const isPlaying = playing[id]
-      if (isPlaying) window.services.stopMpv(id)
-      else window.services.startMpv(id)
-      setPlaying((prev) => ({ ...prev, [id]: !isPlaying }))
+      if (playing[id]) {
+        stopPlay(id)
+        setPlaying((prev) => ({ ...prev, [id]: false }))
+        return
+      }
+
+      setPlaying((prev) => ({ ...prev, [id]: true }))
+      setError('')
+      setLogs((prev) => ({ ...prev, [id]: [] }))
+
+      const appendLog = (line: LogLine) => {
+        setLogs((prev) => ({ ...prev, [id]: [...(prev[id] || []), line] }))
+      }
+      const onFatal = (message: string) => {
+        setPlaying((prev) => ({ ...prev, [id]: false }))
+        setError(`房间 ${id} 播放失败: ${message}`)
+        // 合并 preload 侧的流日志，便于排查
+        try {
+          const { lines } = window.services.getStreamLog(id)
+          lines.forEach((text) => appendLog({ time: '', level: 'error', text: `[stream] ${text}` }))
+        } catch {}
+        // 清理 mpegts 播放器与音频元素
+        stopPlay(id)
+      }
+
+      startPlay(id, appendLog, onFatal).catch((e) => {
+        onFatal((e as Error).message)
+      })
     },
     [roomsData, playing],
   )
+
+  const handleOpen = useCallback((id: number) => {
+    window.ztools.shellOpenExternal(`https://live.bilibili.com/${id}`)
+  }, [])
 
   /* ── auto-sort: bubble live rooms to front on poll updates ── */
 
@@ -336,6 +391,12 @@ export default function Live() {
     }, pollInterval * 60 * 1000)
     return () => clearInterval(timerRef.current)
   }, [roomIds, pollInterval, fetchRooms])
+
+  /* ── 卸载时停止所有正在播放的音频 ── */
+
+  useEffect(() => {
+    return () => stopAll()
+  }, [])
 
   /* ── render ── */
 
@@ -385,6 +446,23 @@ export default function Live() {
 
       {error && <div className="live-error">{error}</div>}
 
+      {/* 播放日志 — 仅在出错时展示详细排查信息 */}
+      {error && Object.keys(logs).some((id) => (logs[Number(id)] || []).length > 0) && (
+        <details className="live-debug" open>
+          <summary className="live-debug-summary">播放日志</summary>
+          {Object.entries(logs).map(([id, lines]) =>
+            lines.length ? (
+              <div className="live-debug-section" key={id}>
+                <div className="live-debug-label">房间 {id}</div>
+                <pre className="live-debug-pre">
+                  {lines.map((l) => `${l.time ? l.time + ' ' : ''}[${l.level}] ${l.text}`).join('\n')}
+                </pre>
+              </div>
+            ) : null,
+          )}
+        </details>
+      )}
+
       {/* 调试开关 — 仅 dev 环境可见 */}
       {import.meta.env.DEV && (
         <label className="live-debug-toggle">
@@ -420,9 +498,10 @@ export default function Live() {
                   id={id}
                   info={roomsData[id]}
                   playing={!!playing[id]}
-                  onToggleMpv={handleMpvToggle}
+                  onTogglePlay={handlePlayToggle}
                   onRemove={handleRemove}
                   onRetry={fetchRooms}
+                  onOpen={handleOpen}
                 />
               </SortableCard>
             ))}
@@ -436,9 +515,10 @@ export default function Live() {
                 id={activeId}
                 info={activeInfo}
                 playing={!!playing[activeId]}
-                onToggleMpv={handleMpvToggle}
+                onTogglePlay={handlePlayToggle}
                 onRemove={handleRemove}
                 onRetry={fetchRooms}
+                onOpen={handleOpen}
               />
             </div>
           ) : null}
