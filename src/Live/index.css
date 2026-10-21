@@ -53,7 +53,15 @@
 }
 
 .live-interval-select {
-  padding: 2px 6px;
+  position: relative;
+  display: inline-block;
+}
+
+.live-interval-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
   border: 1px solid var(--border-color, #ccc);
   border-radius: 4px;
   line-height: 1.8;
@@ -62,6 +70,48 @@
   outline: none;
   cursor: pointer;
   font-size: 13px;
+  white-space: nowrap;
+}
+
+.live-interval-caret {
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+.live-interval-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  min-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 6px;
+  background: var(--bg-color, #fff);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.live-interval-option {
+  display: block;
+  width: 100%;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-color, #333);
+  font-size: 13px;
+  line-height: 1.8;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.live-interval-option:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.live-interval-option.is-active {
+  color: var(--blue);
 }
 
 .live-interval-current {
@@ -73,6 +123,23 @@
   .live-interval {
     background: #2a2a2b;
     border-color: #444;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .live-interval-trigger,
+  .live-interval-menu {
+    background: #2a2a2b;
+    border-color: #444;
+    color: #fff;
+  }
+
+  .live-interval-option {
+    color: #fff;
+  }
+
+  .live-interval-option:hover {
+    background: rgba(128, 128, 128, 0.2);
   }
 }
 

@@ -15,6 +15,7 @@ import { LogLine, startPlay, stopAll, stopPlay } from './player'
 
 const ROOM_IDS_KEY = 'blive-room-ids'
 const INTERVAL_KEY = 'blive-poll-interval'
+const INTERVAL_OPTIONS = [1, 5, 10, 30]
 
 interface RoomInfo {
   room_id: number
@@ -76,7 +77,7 @@ function loadInterval(): number {
   try {
     const raw = localStorage.getItem(INTERVAL_KEY)
     const v = raw ? parseInt(raw, 10) : 0
-    return [1, 5, 10, 30].includes(v) ? v : 1
+    return INTERVAL_OPTIONS.includes(v) ? v : 1
   } catch {
     return 1
   }
@@ -206,6 +207,54 @@ function CardInner({ id, info, playing, onTogglePlay, onRemove, onRetry, onOpen 
         </div>
       </div>
     </>
+  )
+}
+
+/* ── Custom interval dropdown (native <select> popups don't render in the ztools host) ── */
+
+function IntervalSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  return (
+    <div className="live-interval-select" ref={rootRef}>
+      <button
+        className="live-interval-trigger"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        {value} 分钟
+        <span className="live-interval-caret">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="live-interval-menu" role="listbox">
+          {INTERVAL_OPTIONS.map((v) => (
+            <button
+              key={v}
+              className={`live-interval-option${v === value ? ' is-active' : ''}`}
+              role="option"
+              aria-selected={v === value}
+              onClick={() => {
+                onChange(v)
+                setOpen(false)
+              }}
+            >
+              {v} 分钟
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -426,20 +475,13 @@ export default function Live() {
       <div className="live-interval">
         <span className="live-interval-label">数据刷新</span>
         <div className="live-interval-control">
-          <select
-            className="live-interval-select"
+          <IntervalSelect
             value={pollInterval}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10)
+            onChange={(v) => {
               localStorage.setItem(INTERVAL_KEY, String(v))
               setPollInterval(v)
             }}
-          >
-            <option value={1}>1 分钟</option>
-            <option value={5}>5 分钟</option>
-            <option value={10}>10 分钟</option>
-            <option value={30}>30 分钟</option>
-          </select>
+          />
           <span className="live-interval-current">每 {pollInterval} 分钟自动刷新</span>
         </div>
       </div>
