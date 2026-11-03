@@ -11,10 +11,12 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { LogLine, PlayStatus, startPlay, stopAll, stopPlay } from './player'
+import { LogLine, PlayStatus, setVolume, startPlay, stopAll, stopPlay } from './player'
 
 const ROOM_IDS_KEY = 'blive-room-ids'
 const INTERVAL_KEY = 'blive-poll-interval'
+const VOLUME_KEY = 'blive-volume'
+const LOG_ENABLED_KEY = 'blive-log-enabled'
 const INTERVAL_OPTIONS = [1, 5, 10, 30]
 /** 每个房间在界面上最多保留的日志行数 */
 const MAX_LOG_LINES = 400
@@ -80,6 +82,16 @@ function loadInterval(): number {
     const raw = localStorage.getItem(INTERVAL_KEY)
     const v = raw ? parseInt(raw, 10) : 0
     return INTERVAL_OPTIONS.includes(v) ? v : 1
+  } catch {
+    return 1
+  }
+}
+
+function loadVolume(): number {
+  try {
+    const raw = localStorage.getItem(VOLUME_KEY)
+    const v = raw ? parseFloat(raw) : NaN
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1
   } catch {
     return 1
   }
@@ -274,11 +286,15 @@ export default function Live() {
   const [playing, setPlaying] = useState<Record<number, boolean>>({})
   const [reconnecting, setReconnecting] = useState<Record<number, boolean>>({})
   const [logs, setLogs] = useState<Record<number, LogLine[]>>({})
+  const [logEnabled, setLogEnabled] = useState(() => localStorage.getItem(LOG_ENABLED_KEY) === '1')
+  const [volume, setVolumeState] = useState(loadVolume)
   const [showDebug, setShowDebug] = useState(false)
   const [copied, setCopied] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined)
   /** 每个房间已同步过的 preload 日志行数 */
   const proxyLogCount = useRef<Record<number, number>>({})
+  /** 日志开关的最新值，供播放回调读取（避免闭包拿到旧值） */
+  const logEnabledRef = useRef(logEnabled)
 
   /* ── dnd-kit ── */
 
@@ -410,6 +426,7 @@ export default function Live() {
       proxyLogCount.current[id] = 0
 
       const appendLog = (line: LogLine) => {
+        if (!logEnabledRef.current) return
         setLogs((prev) => {
           const next = [...(prev[id] || []), line]
           return { ...prev, [id]: next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next }
@@ -481,7 +498,7 @@ export default function Live() {
   const activePlayKey = activePlayIds.join(',')
 
   useEffect(() => {
-    if (!activePlayKey) return
+    if (!activePlayKey || !logEnabled) return
     const ids = activePlayKey.split(',').map(Number)
     const timer = setInterval(() => {
       ids.forEach((id) => {
@@ -506,6 +523,33 @@ export default function Live() {
       })
     }, 1000)
     return () => clearInterval(timer)
+  }, [activePlayKey, logEnabled])
+
+  /* ── 日志开关 / 清空 ── */
+
+  const handleLogToggle = useCallback(
+    (enabled: boolean) => {
+      setLogEnabled(enabled)
+      localStorage.setItem(LOG_ENABLED_KEY, enabled ? '1' : '0')
+      if (enabled) {
+        // 从当前进度开始记录，不回填开关打开之前的内容
+        activePlayIds.forEach((id) => {
+          try {
+            proxyLogCount.current[id] = window.services.getStreamLog(id).lines.length
+          } catch {}
+        })
+      }
+    },
+    [activePlayKey],
+  )
+
+  const handleClearLogs = useCallback(() => {
+    setLogs({})
+    activePlayIds.forEach((id) => {
+      try {
+        proxyLogCount.current[id] = window.services.getStreamLog(id).lines.length
+      } catch {}
+    })
   }, [activePlayKey])
 
   /* ── 复制日志 ── */
@@ -528,6 +572,21 @@ export default function Live() {
     setCopied(ok)
     setTimeout(() => setCopied(false), 1500)
   }, [logs, pollInterval])
+
+  /* ── 日志开关 & 音量同步 ── */
+
+  useEffect(() => {
+    logEnabledRef.current = logEnabled
+  }, [logEnabled])
+
+  useEffect(() => {
+    setVolume(volume)
+  }, [volume])
+
+  const handleVolumeChange = useCallback((v: number) => {
+    setVolumeState(v)
+    localStorage.setItem(VOLUME_KEY, String(v))
+  }, [])
 
   /* ── 卸载时停止所有正在播放的音频 ── */
 
@@ -572,6 +631,35 @@ export default function Live() {
           />
           <span className="live-interval-current">每 {pollInterval} 分钟自动刷新</span>
         </div>
+        <div className="live-volume">
+          <span className="live-volume-icon">{volume === 0 ? '🔇' : '🔊'}</span>
+          <input
+            className="live-volume-slider"
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={Math.round(volume * 100)}
+            onChange={(e) => handleVolumeChange(Number(e.target.value) / 100)}
+            title={`音量 ${Math.round(volume * 100)}%`}
+          />
+          <span className="live-volume-value">{Math.round(volume * 100)}%</span>
+        </div>
+      </div>
+
+      {/* 播放日志开关 */}
+      <div className="live-logbar">
+        <label className="live-log-toggle">
+          <input
+            type="checkbox"
+            checked={logEnabled}
+            onChange={(e) => handleLogToggle(e.target.checked)}
+          />
+          <span>记录播放日志</span>
+        </label>
+        <button className="live-log-clear" onClick={handleClearLogs} disabled={!hasLogs}>
+          清空日志
+        </button>
       </div>
 
       {error && <div className="live-error">{error}</div>}

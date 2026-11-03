@@ -50,6 +50,9 @@ interface Session {
 
 const sessions = new Map<number, Session>()
 
+/** 全局音量（0–1），新创建的音频元素会沿用当前值 */
+let currentVolume = 1
+
 /* ── 把 mpegts 内部的告警/错误也收进播放日志 ── */
 
 const mpegtsLogCounts = new Map<string, number>()
@@ -290,6 +293,7 @@ async function connect(session: Session): Promise<void> {
   const audio = document.createElement('audio')
   audio.setAttribute('playsinline', '')
   audio.style.display = 'none'
+  audio.volume = currentVolume
   document.body.appendChild(audio)
 
   const player = mpegts.createPlayer(
@@ -444,4 +448,12 @@ export function stopPlay(roomId: number): void {
 /** 停止所有正在播放的音频（组件卸载时调用） */
 export function stopAll(): void {
   Array.from(sessions.keys()).forEach((id) => stopPlay(id))
+}
+
+/** 设置全局音量，并同步到所有正在播放的音频元素 */
+export function setVolume(volume: number): void {
+  currentVolume = Math.min(1, Math.max(0, volume))
+  sessions.forEach((session) => {
+    if (session.audio) session.audio.volume = currentVolume
+  })
 }
