@@ -227,6 +227,19 @@
   background: #fb7299;
 }
 
+/* 断流重连提示 */
+.live-card-reconnecting {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+}
+
 /* 播放遮罩 */
 .live-card-overlay {
   position: absolute;
@@ -388,6 +401,16 @@
   cursor: pointer;
   background: var(--bg-color, #f9f9f9);
   color: var(--text-color, #666);
+}
+
+.live-debug-copy {
+  float: right;
+  padding: 0 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.8;
+  background: var(--blue);
+  color: #fff;
 }
 
 .live-debug-section {

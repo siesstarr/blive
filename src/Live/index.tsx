@@ -11,11 +11,13 @@ import {
 } from '@dnd-kit/core'
 import { arrayMove, rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { LogLine, startPlay, stopAll, stopPlay } from './player'
+import { LogLine, PlayStatus, startPlay, stopAll, stopPlay } from './player'
 
 const ROOM_IDS_KEY = 'blive-room-ids'
 const INTERVAL_KEY = 'blive-poll-interval'
 const INTERVAL_OPTIONS = [1, 5, 10, 30]
+/** 每个房间在界面上最多保留的日志行数 */
+const MAX_LOG_LINES = 400
 
 interface RoomInfo {
   room_id: number
@@ -124,6 +126,7 @@ interface CardInnerProps {
   id: number
   info: RoomInfo | undefined
   playing: boolean
+  reconnecting: boolean
   onTogglePlay: (id: number) => void
   onRemove: (id: number) => void
   onRetry: (ids: number[]) => void
@@ -142,7 +145,7 @@ function BilibiliIcon() {
   )
 }
 
-function CardInner({ id, info, playing, onTogglePlay, onRemove, onRetry, onOpen }: CardInnerProps) {
+function CardInner({ id, info, playing, reconnecting, onTogglePlay, onRemove, onRetry, onOpen }: CardInnerProps) {
   if (!info) {
     return (
       <div className="live-card-error">
@@ -161,7 +164,7 @@ function CardInner({ id, info, playing, onTogglePlay, onRemove, onRetry, onOpen 
         <img className="live-card-cover" src={info.cover} alt={info.title} referrerPolicy="no-referrer" draggable={false} />
         {info.live_status === 1 && (
           <div className="live-card-overlay">
-            <span className="live-card-play-icon">{playing ? '⏹' : '▶'}</span>
+            <span className="live-card-play-icon">{reconnecting ? '⟳' : playing ? '⏹' : '▶'}</span>
           </div>
         )}
         {info.live_status === 1 && (
@@ -170,6 +173,7 @@ function CardInner({ id, info, playing, onTogglePlay, onRemove, onRetry, onOpen 
         <span className={`live-card-status${info.live_status === 1 ? ' is-live' : ''}`}>
           {info.live_status === 1 ? '直播中' : '未开播'}
         </span>
+        {reconnecting && <span className="live-card-reconnecting">重连中…</span>}
       </div>
       <div className="live-card-body">
         <div className="live-card-title" title={info.title}>
@@ -268,9 +272,13 @@ export default function Live() {
   const [error, setError] = useState('')
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [playing, setPlaying] = useState<Record<number, boolean>>({})
+  const [reconnecting, setReconnecting] = useState<Record<number, boolean>>({})
   const [logs, setLogs] = useState<Record<number, LogLine[]>>({})
   const [showDebug, setShowDebug] = useState(false)
+  const [copied, setCopied] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined)
+  /** 每个房间已同步过的 preload 日志行数 */
+  const proxyLogCount = useRef<Record<number, number>>({})
 
   /* ── dnd-kit ── */
 
@@ -360,10 +368,22 @@ export default function Live() {
 
   const handleRemove = useCallback(
     (id: number) => {
+      // 移除时停止播放，避免音频元素残留在后台
+      stopPlay(id)
       const next = roomIds.filter((v) => v !== id)
       saveIds(next)
       setRoomIds(next)
+      setPlaying((prev) => {
+        const copy = { ...prev }
+        delete copy[id]
+        return copy
+      })
       setRoomsData((prev) => {
+        const copy = { ...prev }
+        delete copy[id]
+        return copy
+      })
+      setReconnecting((prev) => {
         const copy = { ...prev }
         delete copy[id]
         return copy
@@ -379,18 +399,25 @@ export default function Live() {
       if (playing[id]) {
         stopPlay(id)
         setPlaying((prev) => ({ ...prev, [id]: false }))
+        setReconnecting((prev) => ({ ...prev, [id]: false }))
         return
       }
 
       setPlaying((prev) => ({ ...prev, [id]: true }))
+      setReconnecting((prev) => ({ ...prev, [id]: false }))
       setError('')
       setLogs((prev) => ({ ...prev, [id]: [] }))
+      proxyLogCount.current[id] = 0
 
       const appendLog = (line: LogLine) => {
-        setLogs((prev) => ({ ...prev, [id]: [...(prev[id] || []), line] }))
+        setLogs((prev) => {
+          const next = [...(prev[id] || []), line]
+          return { ...prev, [id]: next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next }
+        })
       }
       const onFatal = (message: string) => {
         setPlaying((prev) => ({ ...prev, [id]: false }))
+        setReconnecting((prev) => ({ ...prev, [id]: false }))
         setError(`房间 ${id} 播放失败: ${message}`)
         // 合并 preload 侧的流日志，便于排查
         try {
@@ -401,7 +428,11 @@ export default function Live() {
         stopPlay(id)
       }
 
-      startPlay(id, appendLog, onFatal).catch((e) => {
+      const onStatus = (status: PlayStatus) => {
+        setReconnecting((prev) => ({ ...prev, [id]: status === 'reconnecting' }))
+      }
+
+      startPlay(id, appendLog, onFatal, onStatus).catch((e) => {
         onFatal((e as Error).message)
       })
     },
@@ -440,6 +471,63 @@ export default function Live() {
     }, pollInterval * 60 * 1000)
     return () => clearInterval(timerRef.current)
   }, [roomIds, pollInterval, fetchRooms])
+
+  /* ── 把 preload 侧的代理日志同步到播放日志面板 ── */
+
+  const activePlayIds = Object.keys(playing)
+    .filter((k) => playing[Number(k)] || reconnecting[Number(k)])
+    .map(Number)
+  // 依赖用字符串，避免每次渲染都重建定时器
+  const activePlayKey = activePlayIds.join(',')
+
+  useEffect(() => {
+    if (!activePlayKey) return
+    const ids = activePlayKey.split(',').map(Number)
+    const timer = setInterval(() => {
+      ids.forEach((id) => {
+        let lines: string[] = []
+        try {
+          lines = window.services.getStreamLog(id).lines
+        } catch {
+          return
+        }
+        // 重连后 preload 侧的日志会重新开始，行数变少说明换了新连接
+        if (lines.length < (proxyLogCount.current[id] || 0)) {
+          proxyLogCount.current[id] = 0
+        }
+        const seen = proxyLogCount.current[id] || 0
+        if (lines.length <= seen) return
+        proxyLogCount.current[id] = lines.length
+        const fresh = lines.slice(seen).map((text) => ({ time: '', level: 'info' as const, text }))
+        setLogs((prev) => {
+          const next = [...(prev[id] || []), ...fresh]
+          return { ...prev, [id]: next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next }
+        })
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [activePlayKey])
+
+  /* ── 复制日志 ── */
+
+  const hasLogs = Object.values(logs).some((lines) => lines.length > 0)
+
+  const handleCopyLogs = useCallback(() => {
+    const out: string[] = []
+    out.push(`=== blive 播放日志 ${new Date().toLocaleString()} ===`)
+    out.push(`UA: ${navigator.userAgent}`)
+    out.push(`轮询间隔: ${pollInterval} 分钟`)
+    out.push('')
+    Object.entries(logs).forEach(([id, lines]) => {
+      if (!lines.length) return
+      out.push(`--- 房间 ${id} ---`)
+      lines.forEach((l) => out.push(`${l.time ? l.time + ' ' : ''}[${l.level}] ${l.text}`))
+      out.push('')
+    })
+    const ok = window.ztools.copyText(out.join('\n'))
+    setCopied(ok)
+    setTimeout(() => setCopied(false), 1500)
+  }, [logs, pollInterval])
 
   /* ── 卸载时停止所有正在播放的音频 ── */
 
@@ -488,10 +576,22 @@ export default function Live() {
 
       {error && <div className="live-error">{error}</div>}
 
-      {/* 播放日志 — 仅在出错时展示详细排查信息 */}
-      {error && Object.keys(logs).some((id) => (logs[Number(id)] || []).length > 0) && (
-        <details className="live-debug" open>
-          <summary className="live-debug-summary">播放日志</summary>
+      {/* 播放日志 — 有日志即可查看/复制，便于排查断流 */}
+      {hasLogs && (
+        <details className="live-debug" open={!!error}>
+          <summary className="live-debug-summary">
+            <span>播放日志</span>
+            <button
+              className="live-debug-copy"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                handleCopyLogs()
+              }}
+            >
+              {copied ? '已复制' : '复制'}
+            </button>
+          </summary>
           {Object.entries(logs).map(([id, lines]) =>
             lines.length ? (
               <div className="live-debug-section" key={id}>
@@ -540,6 +640,7 @@ export default function Live() {
                   id={id}
                   info={roomsData[id]}
                   playing={!!playing[id]}
+                  reconnecting={!!reconnecting[id]}
                   onTogglePlay={handlePlayToggle}
                   onRemove={handleRemove}
                   onRetry={fetchRooms}
@@ -557,6 +658,7 @@ export default function Live() {
                 id={activeId}
                 info={activeInfo}
                 playing={!!playing[activeId]}
+                reconnecting={!!reconnecting[activeId]}
                 onTogglePlay={handlePlayToggle}
                 onRemove={handleRemove}
                 onRetry={fetchRooms}

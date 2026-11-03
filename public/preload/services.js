@@ -16,11 +16,21 @@ function now() {
   return new Date().toISOString()
 }
 
+/** 每个房间最多保留的日志行数，避免长时间运行后无限增长 */
+const MAX_LOG_LINES = 500
+/** 上游多久没有任何数据就判定为死连接，主动断开让前端重连 */
+const UPSTREAM_IDLE_TIMEOUT_MS = 20000
+
 /** 记录一条日志到对应房间的缓冲区，并同步输出到主进程控制台 */
 function log(roomId, message) {
   const line = `[${now()}] ${message}`
   const entry = streams[roomId]
-  if (entry) entry.log.push(line)
+  if (entry) {
+    entry.log.push(line)
+    if (entry.log.length > MAX_LOG_LINES) {
+      entry.log.splice(0, entry.log.length - MAX_LOG_LINES)
+    }
+  }
   console.log(`[blive][room ${roomId}] ${message}`)
 }
 
@@ -114,46 +124,99 @@ function handleProxy(req, res) {
   log(roomId, `客户端连接，开始代理 ${entry.url}`)
   res.writeHead(200, { ...corsHeaders(), 'Content-Type': 'video/x-flv', 'Cache-Control': 'no-store' })
 
+  const startedAt = Date.now()
   let byteCount = 0
-  const handle = fetchStream(
+  let lastChunkAt = Date.now()
+  let upstream = null
+  let idleTimer = null
+
+  const clearIdle = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+  const resetIdle = () => {
+    clearIdle()
+    idleTimer = setTimeout(() => {
+      log(roomId, `上游 ${UPSTREAM_IDLE_TIMEOUT_MS / 1000}s 无数据，主动断开`)
+      try { res.end() } catch {}
+      if (upstream) upstream.destroy()
+    }, UPSTREAM_IDLE_TIMEOUT_MS)
+  }
+  resetIdle()
+
+  upstream = fetchStream(
     entry.url,
     roomId,
     (upRes) => {
       const code = upRes.statusCode || 0
+      const h = upRes.headers
+      log(
+        roomId,
+        `上游响应 ${code} type=${h['content-type'] || '-'} len=${h['content-length'] || '-'} ` +
+          `te=${h['transfer-encoding'] || '-'} conn=${h['connection'] || '-'}`,
+      )
       if (code !== 200) {
-        log(roomId, `上游返回 ${code}，结束连接`)
+        log(roomId, `上游返回非 200，结束连接`)
+        clearIdle()
         res.end()
         return
       }
-      log(roomId, `上游响应 ${code} ${upRes.headers['content-type'] || ''}`)
+      resetIdle()
       upRes.on('data', (chunk) => {
         byteCount += chunk.length
+        const nowMs = Date.now()
+        const gap = nowMs - lastChunkAt
+        if (gap > 3000) log(roomId, `上游数据间隔 ${(gap / 1000).toFixed(1)}s`)
+        lastChunkAt = nowMs
+        resetIdle()
         if (byteCount % (1024 * 1024) < chunk.length) {
           log(roomId, `已转发 ${(byteCount / 1024 / 1024).toFixed(1)} MB`)
         }
         res.write(chunk)
       })
       upRes.on('end', () => {
-        log(roomId, '上游流结束')
+        clearIdle()
+        log(
+          roomId,
+          `上游流结束，共 ${(byteCount / 1024 / 1024).toFixed(2)} MB，` +
+            `持续 ${((Date.now() - startedAt) / 1000).toFixed(0)}s`,
+        )
         res.end()
       })
+      upRes.on('aborted', () => {
+        clearIdle()
+        log(roomId, '上游响应被中止 (aborted)')
+      })
+      upRes.on('close', () => {
+        clearIdle()
+        if (!upRes.complete) log(roomId, '上游连接提前关闭 (incomplete)')
+      })
       upRes.on('error', (err) => {
+        clearIdle()
         log(roomId, `上游读取错误: ${err.message}`)
         res.destroy(err)
       })
     },
     (err) => {
+      clearIdle()
       log(roomId, `上游连接失败: ${err.message}`)
       res.destroy(err)
     },
   )
-  entry.upstream = handle
+  entry.upstream = upstream
 
   req.on('close', () => {
-    if (entry.upstream === handle) {
-      log(roomId, '客户端断开，中止上游连接')
+    clearIdle()
+    if (entry.upstream === upstream) {
+      log(
+        roomId,
+        `客户端断开，中止上游连接（已转发 ${(byteCount / 1024 / 1024).toFixed(2)} MB，` +
+          `持续 ${((Date.now() - startedAt) / 1000).toFixed(0)}s）`,
+      )
       entry.upstream = null
-      handle.destroy()
+      upstream.destroy()
     }
   })
 }
